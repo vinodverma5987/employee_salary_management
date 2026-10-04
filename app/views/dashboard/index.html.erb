@@ -1,0 +1,121 @@
+<div id="salary-dashboard"></div>
+
+<script type="text/babel">
+const { useEffect, useMemo, useState } = React;
+const money = (cents, currency = "USD") => new Intl.NumberFormat("en", { style: "currency", currency, maximumFractionDigits: 0 }).format((cents || 0) / 100);
+const number = (value) => new Intl.NumberFormat("en").format(value || 0);
+
+function useApi(path) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    fetch(path).then((response) => response.json()).then((json) => active && setData(json)).finally(() => active && setLoading(false));
+    return () => { active = false; };
+  }, [path]);
+  return { data, loading };
+}
+
+function Dashboard() {
+  const [filters, setFilters] = useState({ q: "", country: "", department: "", level: "", employment_status: "", sort: "name", direction: "asc" });
+  const [page, setPage] = useState(1);
+  const [selectedId, setSelectedId] = useState(null);
+  const [refresh, setRefresh] = useState(0);
+  const query = useMemo(() => buildQuery({ ...filters, page, per_page: 25, refresh }), [filters, page, refresh]);
+  const summaryQuery = useMemo(() => buildQuery({ ...filters, refresh }), [filters, refresh]);
+  const { data: options } = useApi("/api/options");
+  const { data: employees, loading } = useApi(`/api/employees?${query}`);
+  const { data: summary } = useApi(`/api/summary?${summaryQuery}`);
+  const updateFilter = (key, value) => { setPage(1); setFilters((current) => ({ ...current, [key]: value })); };
+
+  return (
+    <main className="app-shell">
+      <header className="topbar">
+        <div className="brand"><h1>ACME Salary Management</h1><p>Compensation operations for a 10,000 employee organization</p></div>
+        <div className="status-pill">{summary ? `${number(summary.headcount)} employees in view` : "Loading payroll"}</div>
+      </header>
+      <section className="dashboard">
+        <Filters filters={filters} options={options} onChange={updateFilter} />
+        <Metrics summary={summary} />
+        <div className="content-grid">
+          <section className="panel">
+            <div className="panel-header"><h2>Employees</h2><SortControls filters={filters} onChange={updateFilter} /></div>
+            <EmployeeTable data={employees} loading={loading} onSelect={setSelectedId} />
+            <Pager pagination={employees?.pagination} page={page} setPage={setPage} />
+          </section>
+          <EmployeeDrawer employeeId={selectedId || employees?.employees?.[0]?.id} refresh={refresh} onSalaryUpdated={() => setRefresh((value) => value + 1)} />
+        </div>
+        <Breakdown title="Department Pay Mix" rows={summary?.by_department} />
+      </section>
+    </main>
+  );
+}
+
+function buildQuery(values) {
+  const params = new URLSearchParams(values);
+  [...params.keys()].forEach((key) => !params.get(key) && params.delete(key));
+  return params.toString();
+}
+
+function Filters({ filters, options, onChange }) {
+  return (
+    <section className="filters">
+      <div className="field"><label>Search</label><input value={filters.q} onChange={(event) => onChange("q", event.target.value)} placeholder="Name, email, employee number" /></div>
+      <Select label="Country" value={filters.country} values={options?.countries} onChange={(value) => onChange("country", value)} />
+      <Select label="Department" value={filters.department} values={options?.departments} onChange={(value) => onChange("department", value)} />
+      <Select label="Level" value={filters.level} values={options?.levels} onChange={(value) => onChange("level", value)} />
+      <Select label="Status" value={filters.employment_status} values={options?.statuses} onChange={(value) => onChange("employment_status", value)} />
+    </section>
+  );
+}
+
+function Select({ label, value, values = [], onChange }) {
+  return <div className="field"><label>{label}</label><select value={value} onChange={(event) => onChange(event.target.value)}><option value="">All</option>{values.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>;
+}
+
+function Metrics({ summary }) {
+  const payroll = summary?.total_payroll_by_currency || {};
+  const primaryCurrency = Object.keys(payroll)[0] || "USD";
+  return <section className="metrics"><Metric label="Headcount" value={number(summary?.headcount)} /><Metric label="Payroll" value={money(payroll[primaryCurrency], primaryCurrency)} /><Metric label="Average Salary" value={money(summary?.average_salary_cents, primaryCurrency)} /><Metric label="Median Salary" value={money(summary?.median_salary_cents, primaryCurrency)} /><Metric label="Salary Range" value={`${money(summary?.minimum_salary_cents, primaryCurrency)} - ${money(summary?.maximum_salary_cents, primaryCurrency)}`} /></section>;
+}
+
+function Metric({ label, value }) { return <div className="metric"><span>{label}</span><strong>{value || "..."}</strong></div>; }
+function SortControls({ filters, onChange }) { return <div className="button-row" style={{ padding: 0 }}><select value={filters.sort} onChange={(event) => onChange("sort", event.target.value)}><option value="name">Name</option><option value="salary">Salary</option><option value="department">Department</option><option value="country">Country</option><option value="level">Level</option><option value="hire_date">Hire date</option></select><button className="btn" onClick={() => onChange("direction", filters.direction === "asc" ? "desc" : "asc")}>{filters.direction === "asc" ? "Asc" : "Desc"}</button></div>; }
+
+function EmployeeTable({ data, loading, onSelect }) {
+  return <div className="table-wrap"><table><thead><tr><th>Employee</th><th>Country</th><th>Department</th><th>Level</th><th>Status</th><th>Salary</th></tr></thead><tbody>{loading && <tr><td colSpan="6">Loading employees...</td></tr>}{!loading && data?.employees?.map((employee) => <tr className="employee-row" key={employee.id} onClick={() => onSelect(employee.id)}><td><strong>{employee.full_name}</strong><br /><span className="muted">{employee.employee_number} · {employee.email}</span></td><td>{employee.country}<br /><span className="muted">{employee.city}</span></td><td>{employee.department}</td><td><span className="badge">{employee.level}</span></td><td>{employee.employment_status}</td><td><strong>{money(employee.salary_cents, employee.currency)}</strong></td></tr>)}</tbody></table></div>;
+}
+
+function Pager({ pagination, page, setPage }) {
+  if (!pagination) return null;
+  return <div className="button-row"><span className="muted">Page {pagination.page} of {pagination.total_pages || 1} · {number(pagination.total)} records</span><div><button className="btn" disabled={page <= 1} onClick={() => setPage(page - 1)}>Prev</button><button className="btn" disabled={page >= pagination.total_pages} onClick={() => setPage(page + 1)}>Next</button></div></div>;
+}
+
+function EmployeeDrawer({ employeeId, refresh, onSalaryUpdated }) {
+  const { data: employee } = useApi(employeeId ? `/api/employees/${employeeId}?refresh=${refresh}` : "/api/employees/0");
+  const [salary, setSalary] = useState("");
+  const [effectiveOn, setEffectiveOn] = useState(new Date().toISOString().slice(0, 10));
+  const [reason, setReason] = useState("");
+  const [message, setMessage] = useState("");
+  useEffect(() => { if (employee?.salary_cents) setSalary(String(Math.round(employee.salary_cents / 100))); }, [employee?.id, employee?.salary_cents]);
+  if (!employee || employee.error) return <aside className="drawer"><p className="muted">Select an employee</p></aside>;
+  function submit(event) {
+    event.preventDefault();
+    setMessage("");
+    fetch(`/api/employees/${employee.id}/salary`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ salary_update: { salary_cents: Number(salary) * 100, effective_on: effectiveOn, reason } }) })
+      .then((response) => response.ok ? response.json() : response.json().then((body) => Promise.reject(body)))
+      .then(() => { setReason(""); setMessage("Salary updated"); onSalaryUpdated(); })
+      .catch((error) => setMessage(error.error || "Update failed"));
+  }
+  return <aside className="drawer"><h2>{employee.full_name}</h2><p className="muted">{employee.employee_number} · {employee.email}</p><div className="detail-list"><div><span>Current salary</span><strong>{money(employee.salary_cents, employee.currency)}</strong></div><div><span>Location</span><strong>{employee.city}</strong></div><div><span>Department</span><strong>{employee.department}</strong></div><div><span>Level</span><strong>{employee.level}</strong></div></div><form className="salary-form" onSubmit={submit}><div className="field"><label>New salary ({employee.currency})</label><input type="number" min="1" value={salary} onChange={(event) => setSalary(event.target.value)} required /></div><div className="field"><label>Effective date</label><input type="date" value={effectiveOn} onChange={(event) => setEffectiveOn(event.target.value)} required /></div><div className="field"><label>Reason</label><textarea value={reason} onChange={(event) => setReason(event.target.value)} required rows="3" /></div><button className="btn primary" type="submit">Update Salary</button>{message && <span className={message.includes("failed") ? "error" : "notice"}>{message}</span>}</form><div className="history"><strong>Salary history</strong>{employee.salary_changes?.slice(0, 5).map((change) => <div className="history-item" key={change.id}><strong>{money(change.new_salary_cents, change.currency)}</strong> on {change.effective_on}<br /><span className="muted">{change.reason}</span></div>)}</div></aside>;
+}
+
+function Breakdown({ title, rows = {} }) {
+  const values = Object.entries(rows);
+  const max = Math.max(...values.map(([, row]) => row.headcount), 1);
+  return <section className="panel"><div className="panel-header"><h2>{title}</h2></div><div className="bars">{values.map(([name, row]) => <div className="bar-row" key={name}><strong>{name}</strong><span className="bar-track"><span className="bar-fill" style={{ width: `${(row.headcount / max) * 100}%` }} /></span><span>{number(row.headcount)}</span></div>)}</div></section>;
+}
+
+ReactDOM.createRoot(document.getElementById("salary-dashboard")).render(<Dashboard />);
+</script>

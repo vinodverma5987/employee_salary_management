@@ -1,0 +1,27 @@
+# Rails
+/log/*
+/tmp/*
+!/log/.keep
+!/tmp/.keep
+/storage/*
+!/storage/.keep
+/db/*.sqlite3
+/db/*.sqlite3-*
+
+# Credentials and local environment
+/config/master.key
+/.env*
+
+# Bundler
+/.bundle
+/vendor/bundle
+
+# Node
+/node_modules
+/frontend/node_modules
+/frontend/dist
+
+# OS/editor
+.DS_Store
+.idea
+.vscode
